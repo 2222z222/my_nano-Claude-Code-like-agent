@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-#!/usr/bin/env python3
+
 """
 s03_permission.py - Permission System
 Three gates inserted before tool execution:
@@ -47,11 +47,24 @@ SYSTEM = f"You are a coding agent at {os.getcwd()}.The shell is {platform.system
 # ═══════════════════════════════════════════════════════════
 #  FROM s01 (unchanged)
 # ═══════════════════════════════════════════════════════════
+#加路径逃逸检测
+def  looks_like_escape(command: str) -> bool:
+    patterns = [
+        r"\.\.",                      # 任何 .. （向上穿越）
+        r"[A-Za-z]:[\\/]",            # Windows 盘符 C:\ 或 C:/
+        r"(?<![A-Za-z0-9_])/(?!/)",    # Unix 绝对路径（排除 // 和 URL）
+    ]
+    return any(re.search(p, command) for p in patterns )
 
 def run_bash(command : str) -> str:
     dangerous = ["rm -rf /", "sudo", "shutdown", "reboot", "> /dev/" ]
     if any(d in command for d in dangerous):
         return "Error: Dangerous command blocked"
+
+    if looks_like_escape(command):
+        return  ("Error: command may access paths outside the workspace; "
+                "refused. Use the file tools for file operations.")
+
     try:
         r = subprocess.run(command, shell=True, cwd=WORKDIR,
                            capture_output=True, text=True, timeout=120)
@@ -214,18 +227,12 @@ def agent_loop(messages: list):
         # Execute each tool call, collect results
         results = []
         for block in response.content:
-            if block.type != "tool_use":
-                continue
-            print(f"\033[36m> {block.name}\033[0m")
-            # s03 change: run through permission pipeline before executing
-            if not check_permission(block):
-                results.append({"type": "tool_result", "tool_use_id": block.id,
-                                "content": "Permission denied."})
-                continue
-            handler = TOOL_HANDLERS.get(block.name)
-            output = handler(**block.input) if handler else f"Unknown: {block.name}"
-            print(str(output)[:200])
-            results.append({"type": "tool_result", "tool_use_id": block.id, "content": output})
+            if block.type == "tool_use":
+                print(f"\033[33m${block.name}\033[0m]")
+                handler = TOOL_HANDLERS.get(block.name)
+                output = handler(**block.input) if handler else f"Unknown tool: {block.name}"
+                print(str(output)[:200])
+                results.append({"type": "tool_result","tool_use_id": block.id , "content":output})
 
         # Feed tool results back, loop continues
         messages.append({"role" : "user","content": results})
